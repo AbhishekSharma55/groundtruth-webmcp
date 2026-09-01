@@ -1,6 +1,6 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useCallback, useRef, useSyncExternalStore } from "react";
 import type {
   Assessment, Building, DamageGrade, EventContext, ImageryLayer,
   Infrastructure, Note, Road, Tasking, Viewport,
@@ -151,12 +151,29 @@ export const store = {
   },
 };
 
+/**
+ * `useSyncExternalStore` compares snapshots by identity, so a selector that
+ * allocates (`.filter(...)`, an object literal) would return a fresh reference
+ * on every call and spin forever. The snapshot is therefore memoised against
+ * the state object it was derived from: `set()` always produces a new state,
+ * so the value recomputes exactly when something actually changed.
+ *
+ * The constraint this imposes: a selector must depend only on store state, not
+ * on props or closures that can change while the state object does not.
+ */
 export function useStore<T>(selector: (s: State) => T): T {
-  return useSyncExternalStore(
-    store.subscribe,
-    () => selector(state),
-    () => selector(initial),
-  );
+  const selectorRef = useRef(selector);
+  selectorRef.current = selector;
+  const cache = useRef<{ from: State; value: T } | null>(null);
+
+  const snapshot = useCallback(() => {
+    if (!cache.current || cache.current.from !== state) {
+      cache.current = { from: state, value: selectorRef.current(state) };
+    }
+    return cache.current.value;
+  }, []);
+
+  return useSyncExternalStore(store.subscribe, snapshot, snapshot);
 }
 
 /** Buildings whose centroid falls inside the current viewport. */

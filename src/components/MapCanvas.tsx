@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Map as MLMap,
   NavigationControl,
@@ -42,6 +42,12 @@ const HAS_GRADE = ["!=", ["coalesce", ["feature-state", "grade"], ""], ""] as un
 export default function MapCanvas() {
   const holder = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MLMap | null>(null);
+  /**
+   * Map construction is deferred by a tick (see below), so the effects that add
+   * data layers can run before the map exists. They key off this instead of
+   * mapRef, which would leave them stranded with no reason to re-run.
+   */
+  const [mapReady, setMapReady] = useState(false);
   const loaded = useStore((s) => s.loaded);
   const imagery = useStore((s) => s.imagery);
   const selectedId = useStore((s) => s.selectedId);
@@ -49,65 +55,100 @@ export default function MapCanvas() {
 
   // ---- create the map once ------------------------------------------------
   useEffect(() => {
-    if (!holder.current || mapRef.current) return;
-    const map = new MLMap({
-      container: holder.current,
-      style: {
-        version: 8,
-        sources: {
-          imagery: {
-            type: "raster",
-            tiles: [IMAGERY["storm-day"].url],
-            tileSize: 256,
-            maxzoom: 19,
-            attribution: IMAGERY["storm-day"].attribution,
+    const container = holder.current;
+    if (!container || mapRef.current) return;
+
+    // StrictMode mounts, unmounts and remounts inside a single tick. Building a
+    // MapLibre map and calling remove() on it within that tick races MapLibre's
+    // shared worker pool: the surviving map comes up with a style that never
+    // finishes loading, and MapLibre raises no error for it. Deferring
+    // construction past that tick means the throwaway mount never builds a map.
+    // A timer rather than requestAnimationFrame, because rAF does not fire in a
+    // backgrounded tab and the map would then never be created at all.
+    let cancelled = false;
+    let teardown: (() => void) | undefined;
+
+    const timer = setTimeout(() => {
+      if (cancelled) return;
+
+      const map = new MLMap({
+        container,
+        style: {
+          version: 8,
+          sources: {
+            imagery: {
+              type: "raster",
+              tiles: [IMAGERY["storm-day"].url],
+              tileSize: 256,
+              maxzoom: 19,
+              attribution: IMAGERY["storm-day"].attribution,
+            },
+            base: {
+              type: "raster",
+              tiles: [IMAGERY.reference.url],
+              tileSize: 256,
+              maxzoom: 19,
+              attribution: IMAGERY.reference.attribution,
+            },
           },
-          base: {
-            type: "raster",
-            tiles: [IMAGERY.reference.url],
-            tileSize: 256,
-            maxzoom: 19,
-            attribution: IMAGERY.reference.attribution,
-          },
+          layers: [
+            { id: "bg", type: "background", paint: { "background-color": "#05070c" } },
+            { id: "base", type: "raster", source: "base", paint: { "raster-opacity": 1 } },
+            { id: "imagery", type: "raster", source: "imagery", paint: { "raster-opacity": 1 } },
+          ],
         },
-        layers: [
-          { id: "bg", type: "background", paint: { "background-color": "#05070c" } },
-          { id: "base", type: "raster", source: "base", paint: { "raster-opacity": 1 } },
-          { id: "imagery", type: "raster", source: "imagery", paint: { "raster-opacity": 1 } },
-        ],
-      },
-      bounds: ISLAND,
-      fitBoundsOptions: { padding: 24 },
-      attributionControl: { compact: true },
-      maxZoom: 19,
-      minZoom: 11,
-    });
-    mapRef.current = map;
-    map.addControl(new NavigationControl({ showCompass: false }), "bottom-right");
-    map.addControl(new ScaleControl({ unit: "metric" }), "bottom-left");
-
-    const publish = () => {
-      const b = map.getBounds();
-      const c = map.getCenter();
-      store.setViewport({
-        west: b.getWest(), south: b.getSouth(), east: b.getEast(), north: b.getNorth(),
-        zoom: map.getZoom(), centerLat: c.lat, centerLon: c.lng,
+        bounds: ISLAND,
+        fitBoundsOptions: { padding: 24 },
+        attributionControl: { compact: true },
+        maxZoom: 19,
+        minZoom: 11,
       });
-    };
-    map.on("load", publish);
-    map.on("moveend", publish);
+      mapRef.current = map;
+      setMapReady(true);
 
-    const detach = mapBus.attach({
-      fitBounds: (b) =>
-        map.fitBounds([b.west, b.south, b.east, b.north], { padding: 40, duration: 500 }),
-      flyTo: (lat, lon, zoom) => map.flyTo({ center: [lon, lat], zoom, duration: 500 }),
-      getViewport: () => store.get().viewport,
+      // Surfaced for the eval harness, and for debugging tile/style failures
+      // which MapLibre otherwise swallows into an `error` event.
+      (window as unknown as { __groundtruthMap?: MLMap }).__groundtruthMap = map;
+      map.on("error", (e) => console.error("[maplibre]", e.error?.message ?? e));
+
+      map.addControl(new NavigationControl({ showCompass: false }), "bottom-right");
+      map.addControl(new ScaleControl({ unit: "metric" }), "bottom-left");
+
+      const publish = () => {
+        const b = map.getBounds();
+        const c = map.getCenter();
+        store.setViewport({
+          west: b.getWest(), south: b.getSouth(), east: b.getEast(), north: b.getNorth(),
+          zoom: map.getZoom(), centerLat: c.lat, centerLon: c.lng,
+        });
+      };
+      map.on("load", publish);
+      map.on("moveend", publish);
+
+      const detach = mapBus.attach({
+        fitBounds: (b) =>
+          map.fitBounds([b.west, b.south, b.east, b.north], { padding: 40, duration: 500 }),
+        flyTo: (lat, lon, zoom) => map.flyTo({ center: [lon, lat], zoom, duration: 500 }),
+        getViewport: () => store.get().viewport,
+      });
+
+      // The rails are fixed-width, so a window resize changes the map box.
+      const ro = new ResizeObserver(() => map.resize());
+      ro.observe(container);
+
+      teardown = () => {
+        ro.disconnect();
+        detach();
+        map.remove();
+        mapRef.current = null;
+        setMapReady(false);
+      };
     });
 
     return () => {
-      detach();
-      map.remove();
-      mapRef.current = null;
+      cancelled = true;
+      clearTimeout(timer);
+      teardown?.();
     };
   }, []);
 
@@ -171,34 +212,42 @@ export default function MapCanvas() {
             "case",
             ["boolean", ["feature-state", "selected"], false], "#22d3ee",
             HAS_GRADE, GRADE_MATCH,
-            "#e2e8f0",
+            "#7dd3fc",
           ],
+          // Ungraded outlines have to stay legible against grey rubble without
+          // burying the imagery the assessor is actually reading, so width
+          // tracks zoom rather than sitting at one hairline value.
           "line-width": [
             "case",
             ["boolean", ["feature-state", "selected"], false], 3,
             ["boolean", ["feature-state", "locked"], false], 2,
             HAS_GRADE, 1.5,
-            0.6,
+            ["interpolate", ["linear"], ["zoom"], 13, 0.4, 16, 1, 18, 1.6],
           ],
           "line-opacity": [
             "case",
             ["boolean", ["feature-state", "selected"], false], 1,
             HAS_GRADE, 0.95,
-            0.45,
+            ["interpolate", ["linear"], ["zoom"], 13, 0.3, 16, 0.6, 18, 0.75],
           ],
         },
       });
 
       // Agent proposals are drawn dashed. A human lock is solid. The difference
       // is visible on the map, not just in the panel.
+      // `filter` cannot read feature-state — only paint properties can — so the
+      // agent/human distinction is driven through opacity rather than a filter.
       map.addLayer({
         id: "buildings-proposed", type: "line", source: "buildings",
-        filter: ["==", ["coalesce", ["feature-state", "source"], ""], "agent"],
         paint: {
           "line-color": "#ffffff",
           "line-width": 1.6,
           "line-dasharray": [2, 2],
-          "line-opacity": 0.9,
+          "line-opacity": [
+            "case",
+            ["==", ["coalesce", ["feature-state", "source"], ""], "agent"], 0.9,
+            0,
+          ],
         },
       });
 
@@ -242,7 +291,7 @@ export default function MapCanvas() {
 
     if (map.isStyleLoaded()) add();
     else map.once("load", add);
-  }, [loaded]);
+  }, [loaded, mapReady]);
 
   // ---- imagery switch -----------------------------------------------------
   useEffect(() => {
@@ -254,7 +303,7 @@ export default function MapCanvas() {
     };
     if (map.isStyleLoaded()) apply();
     else map.once("load", apply);
-  }, [imagery]);
+  }, [imagery, mapReady]);
 
   // ---- push assessment + selection into feature-state ---------------------
   useEffect(() => {
@@ -271,12 +320,12 @@ export default function MapCanvas() {
     };
     if (map.isStyleLoaded()) apply();
     else map.once("idle", apply);
-  }, [assessments, loaded]);
+  }, [assessments, loaded, mapReady]);
 
   const prevSelected = useRef<string | null>(null);
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !loaded || !map.getSource("buildings")) return;
+    if (!map || !loaded || !mapReady || !map.getSource("buildings")) return;
     if (prevSelected.current) {
       map.setFeatureState({ source: "buildings", id: prevSelected.current }, { selected: false });
     }
@@ -284,7 +333,10 @@ export default function MapCanvas() {
       map.setFeatureState({ source: "buildings", id: selectedId }, { selected: true });
     }
     prevSelected.current = selectedId;
-  }, [selectedId, loaded]);
+  }, [selectedId, loaded, mapReady]);
 
-  return <div ref={holder} className="absolute inset-0" />;
+  // maplibre-gl.css sets `.maplibregl-map { position: relative }` and is imported
+  // after Tailwind, so `absolute inset-0` here would be overridden and collapse
+  // the container to zero height. Size it directly instead.
+  return <div ref={holder} className="h-full w-full" />;
 }
