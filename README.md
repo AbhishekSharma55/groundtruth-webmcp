@@ -2,6 +2,8 @@
 
 **You read the imagery. Your agent reads everything else.**
 
+**[Live console →](https://groundtruth-webmcp.vercel.app)** · [Source](https://github.com/AbhishekSharma55/groundtruth-webmcp) · Demo video _(coming)_
+
 An agent-assisted rapid damage assessment console, built on
 [WebMCP](https://github.com/webmachinelearning/webmcp). It runs over real NOAA
 emergency-response imagery of Fort Myers Beach, Florida, flown two days after
