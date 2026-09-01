@@ -1,11 +1,24 @@
 /**
- * Minimal typings for the WebMCP browser API (`document.modelContext`).
+ * Typings for the WebMCP browser API (`document.modelContext`), written against
+ * the surface that actually ships in Chrome 151 rather than against the spec.
  *
- * Only the two hints that actually ship in the IDL are modelled here.
- * `destructiveHint` / `idempotentHint` appear in older drafts and in the
- * server-side MCP spec but are NOT part of the shipping browser surface, so
- * they are deliberately absent — declaring them would be documentation that
- * lies about what the browser reads.
+ * Verified empirically on Chrome 151 with #enable-webmcp-testing:
+ *
+ *   ModelContext { ontoolchange, executeTool(tool, argsJson), getTools(),
+ *                  registerTool(descriptor) }
+ *
+ * Three consequences drive the whole registration design:
+ *   1. There is NO `unregisterTool` and no `provideContext`. A tool registered
+ *      on a document cannot be taken back.
+ *   2. Registering a name twice rejects with InvalidStateError "Duplicate tool
+ *      name", so registration must be idempotent across StrictMode remounts,
+ *      Fast Refresh and route changes.
+ *   3. An AbortSignal on the descriptor is accepted and then ignored — it does
+ *      not remove the tool. Only `options.signal` inside execute is real.
+ *
+ * Only the two annotations in the shipping IDL are modelled. `destructiveHint`
+ * and `idempotentHint` exist in older drafts and in server-side MCP but are not
+ * read by the browser, so declaring them would be documentation that lies.
  */
 
 export type JSONSchema = {
@@ -31,7 +44,7 @@ export type ToolResult = {
 };
 
 export type ExecuteOptions = {
-  /** Aborted when the agent cancels the call. Plumb this into every await. */
+  /** Aborted when the agent cancels the call. This one is real — plumb it through. */
   signal?: AbortSignal;
 };
 
@@ -46,10 +59,16 @@ export type ToolDescriptor = {
   ) => Promise<ToolResult>;
 };
 
-export interface ModelContext {
-  registerTool(descriptor: ToolDescriptor): void | Promise<void>;
-  unregisterTool?(name: string): void | Promise<void>;
-  provideContext?(context: { tools: ToolDescriptor[] }): void | Promise<void>;
+/** What `getTools()` hands back. Opaque — `executeTool` requires this object. */
+export type RegisteredTool = { name: string; description: string };
+
+export interface ModelContext extends EventTarget {
+  /** Rejects with InvalidStateError if `descriptor.name` is already registered. */
+  registerTool(descriptor: ToolDescriptor): Promise<void>;
+  getTools(): Promise<RegisteredTool[]>;
+  /** Second argument is a JSON *string*, not an object. */
+  executeTool(tool: RegisteredTool, argsJson: string): Promise<ToolResult>;
+  ontoolchange: ((this: ModelContext, ev: Event) => unknown) | null;
 }
 
 declare global {

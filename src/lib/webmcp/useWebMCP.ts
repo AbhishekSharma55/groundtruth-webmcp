@@ -1,100 +1,119 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { getModelContext, hasWebMCP, type ToolDescriptor } from "./types";
+import { getModelContext, hasWebMCP, type ExecuteOptions, type ToolResult } from "./types";
+import { fail } from "./result";
 
 /**
  * A tool plus the on-page affordances derived from it. Prompt chips live on the
  * tool itself so the suggestions rendered in the UI cannot drift from the tool
  * surface the agent actually sees — both read this one object.
  */
-export type GroundtruthTool = ToolDescriptor & {
+export type GroundtruthTool = {
+  name: string;
+  description: string;
+  inputSchema: {
+    type: "object";
+    properties?: Record<string, unknown>;
+    required?: string[];
+    additionalProperties?: boolean;
+  };
+  annotations?: { readOnlyHint?: boolean; untrustedContentHint?: boolean };
+  execute: (input: Record<string, unknown>, options?: ExecuteOptions) => Promise<ToolResult>;
   /** Suggested prompts shown on-page. Copy-to-clipboard, not auto-sent. */
   chips?: string[];
   /**
-   * State-scoped tools return false until their precondition holds. Flipping
-   * this registers/unregisters the tool, which is what fires `toolchange`.
+   * False until this tool's precondition holds. Because the browser has no
+   * unregisterTool, this gates *first* registration only; once a tool is live
+   * it stays live and `unavailableReason` is what the agent gets instead.
    */
   available?: boolean;
+  /** Why the tool cannot do its job right now. Written for the agent to act on. */
+  unavailableReason?: string;
 };
 
 export type RegistrationState = {
   supported: boolean;
-  /** Names currently registered with the browser. */
   registered: string[];
 };
 
 /**
- * Registers tools against `document.modelContext` for the lifetime of the
- * calling component.
- *
- * Lifecycle rules this enforces:
- *  - one AbortController per mount; aborting removes every tool it added
- *  - React 18/19 StrictMode double-invoke must not leave duplicates behind
- *  - tools whose `available` flips are added/removed in place, so the agent
- *    sees a `toolchange` rather than a stale tool that errors when called
+ * Registration is per-document and irreversible, so the bookkeeping lives at
+ * module scope: StrictMode's double mount, Fast Refresh and any remount must
+ * not attempt a second registerTool for a name the document already has.
  */
+const registeredNames = new Set<string>();
+
+/**
+ * The tool objects registration closed over would go stale as state changes.
+ * Every registered tool therefore dispatches through this, which always resolves
+ * the *current* object for that name.
+ */
+let currentTools: GroundtruthTool[] = [];
+
+function dispatch(
+  name: string,
+  input: Record<string, unknown>,
+  options?: ExecuteOptions,
+): Promise<ToolResult> {
+  const tool = currentTools.find((t) => t.name === name);
+  if (!tool) {
+    return Promise.resolve(fail(`"${name}" is no longer available on this page.`));
+  }
+  // A tool cannot be withdrawn once registered, so a precondition that has since
+  // gone false is reported as a self-correcting failure rather than a silent lie.
+  if (tool.available === false) {
+    return Promise.resolve(
+      fail(tool.unavailableReason ?? `"${name}" cannot run in the current view.`),
+    );
+  }
+  return tool.execute(input, options);
+}
+
 export function useWebMCP(tools: GroundtruthTool[]): RegistrationState {
   const [supported, setSupported] = useState(false);
   const [registered, setRegistered] = useState<string[]>([]);
-  const liveRef = useRef<Map<string, GroundtruthTool>>(new Map());
-
-  useEffect(() => {
-    setSupported(hasWebMCP());
-  }, []);
+  const latest = useRef(tools);
+  latest.current = tools;
+  currentTools = tools;
 
   useEffect(() => {
     const modelContext = getModelContext();
+    setSupported(hasWebMCP());
     if (!modelContext?.registerTool) return;
 
-    const controller = new AbortController();
-    const live = liveRef.current;
+    let cancelled = false;
 
-    const unregister = (name: string) => {
-      try {
-        modelContext.unregisterTool?.(name);
-      } catch {
-        // Removal is best-effort; a browser without unregisterTool still gets
-        // a correct surface because provideContext-style replacement is a no-op
-        // here and duplicate registration is guarded by `live`.
+    void (async () => {
+      for (const tool of latest.current) {
+        // Tools whose precondition has never held are held back, so that the
+        // moment one becomes available the browser fires a real `toolchange`.
+        if (tool.available === false) continue;
+        if (registeredNames.has(tool.name)) continue;
+
+        // Claim the name before awaiting: two effects racing would otherwise
+        // both pass the check and the second would hit InvalidStateError.
+        registeredNames.add(tool.name);
+        try {
+          if (!document.modelContext) break;
+          await document.modelContext.registerTool({
+            name: tool.name,
+            description: tool.description,
+            inputSchema: tool.inputSchema,
+            annotations: tool.annotations,
+            execute: (input, options) => dispatch(tool.name, input, options),
+          });
+        } catch (error) {
+          registeredNames.delete(tool.name);
+          console.error(`[webmcp] registerTool(${tool.name}) failed`, error);
+        }
       }
-      live.delete(name);
+      if (!cancelled) setRegistered([...registeredNames].sort());
+    })();
+
+    return () => {
+      cancelled = true;
     };
-
-    const desired = new Map(
-      tools.filter((tool) => tool.available !== false).map((tool) => [tool.name, tool]),
-    );
-
-    for (const name of [...live.keys()]) {
-      if (!desired.has(name)) unregister(name);
-    }
-
-    for (const [name, tool] of desired) {
-      if (live.has(name) || !document.modelContext) continue;
-      document.modelContext.registerTool({
-        name: tool.name,
-        description: tool.description,
-        inputSchema: tool.inputSchema,
-        annotations: tool.annotations,
-        execute: (input, options) => {
-          // Chain the agent's per-call signal to the component lifetime, so an
-          // unmount cancels work the agent is still awaiting.
-          const signal = options?.signal
-            ? AbortSignal.any([options.signal, controller.signal])
-            : controller.signal;
-          return tool.execute(input, { signal });
-        },
-      });
-      live.set(name, tool);
-    }
-
-    setRegistered([...live.keys()].sort());
-
-    controller.signal.addEventListener("abort", () => {
-      for (const name of [...live.keys()]) unregister(name);
-    });
-
-    return () => controller.abort();
   }, [tools]);
 
   return { supported, registered };

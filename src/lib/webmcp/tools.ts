@@ -600,7 +600,9 @@ export function createTools(availability: ToolAvailability): GroundtruthTool[] {
       },
       annotations: { readOnlyHint: false, untrustedContentHint: true },
       available: availability.bothImagery,
-      chips: ["Show me the before imagery for this block"],
+      unavailableReason:
+        "The NOAA storm-day flight does not cover what is on screen. Call set_view with place \"Estero Island\" to get back over the survey area, then try again.",
+      chips: ["Show me the reference imagery for this block"],
       execute: async (input, options) => {
         try {
           throwIfAborted(options?.signal);
@@ -630,6 +632,8 @@ export function createTools(availability: ToolAvailability): GroundtruthTool[] {
       },
       annotations: readOnly,
       available: availability.hasAssessments,
+      unavailableReason:
+        "Nothing has been assessed yet, so there is no report to write. Grade at least one building with propose_grade first, or ask the assessor to.",
       chips: ["Write up a situation report from what we've assessed"],
       execute: async (input, options) => {
         try {

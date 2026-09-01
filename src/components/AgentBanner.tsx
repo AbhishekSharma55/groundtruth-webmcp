@@ -68,8 +68,9 @@ export default function AgentBanner({
         )}
         {env === "none" && (
           <span className="text-amber-300">
-            No agent attached — the console works fully on its own. For tools, open in the
-            ChatGPT in-app browser, or Chrome 149+ with <code className="text-amber-200">#web-machine-learning-model-context</code> enabled.
+            No agent attached — the console works fully on its own. For tools, open it in the
+            ChatGPT in-app browser, or in Chrome 149+ with{" "}
+            <code className="text-amber-200">chrome://flags#enable-webmcp-testing</code> enabled.
           </span>
         )}
       </div>
