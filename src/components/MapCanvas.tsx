@@ -39,6 +39,23 @@ const GRADE_MATCH = [
 
 const HAS_GRADE = ["!=", ["coalesce", ["feature-state", "grade"], ""], ""] as unknown as ExpressionSpecification;
 
+/**
+ * Builds `interpolate(zoom) -> case(feature-state)`. A zoom expression is only
+ * legal as the outermost expression, so the data-driven `case` has to live in
+ * each stop's output rather than wrapping the interpolate.
+ */
+function outlineByZoom(
+  ...args: [[number, number], [number, number], [number, number], (ungraded: number) => unknown[]]
+): ExpressionSpecification {
+  const [a, b, c, branch] = args;
+  return [
+    "interpolate", ["linear"], ["zoom"],
+    a[0], branch(a[1]),
+    b[0], branch(b[1]),
+    c[0], branch(c[1]),
+  ] as unknown as ExpressionSpecification;
+}
+
 export default function MapCanvas() {
   const holder = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MLMap | null>(null);
@@ -215,21 +232,29 @@ export default function MapCanvas() {
             "#7dd3fc",
           ],
           // Ungraded outlines have to stay legible against grey rubble without
-          // burying the imagery the assessor is actually reading, so width
-          // tracks zoom rather than sitting at one hairline value.
-          "line-width": [
-            "case",
-            ["boolean", ["feature-state", "selected"], false], 3,
-            ["boolean", ["feature-state", "locked"], false], 2,
-            HAS_GRADE, 1.5,
-            ["interpolate", ["linear"], ["zoom"], 13, 0.4, 16, 1, 18, 1.6],
-          ],
-          "line-opacity": [
-            "case",
-            ["boolean", ["feature-state", "selected"], false], 1,
-            HAS_GRADE, 0.95,
-            ["interpolate", ["linear"], ["zoom"], 13, 0.3, 16, 0.6, 18, 0.75],
-          ],
+          // burying the imagery the assessor is reading, so the ungraded case
+          // tracks zoom. The style spec only allows a zoom expression as the
+          // outermost expression, so the per-feature `case` sits inside the
+          // interpolate stops rather than the other way round.
+          "line-width": outlineByZoom(
+            [13, 0.4], [16, 1], [18, 1.6],
+            (ungraded) => [
+              "case",
+              ["boolean", ["feature-state", "selected"], false], 3,
+              ["boolean", ["feature-state", "locked"], false], 2,
+              HAS_GRADE, 1.5,
+              ungraded,
+            ],
+          ),
+          "line-opacity": outlineByZoom(
+            [13, 0.3], [16, 0.6], [18, 0.75],
+            (ungraded) => [
+              "case",
+              ["boolean", ["feature-state", "selected"], false], 1,
+              HAS_GRADE, 0.95,
+              ungraded,
+            ],
+          ),
         },
       });
 

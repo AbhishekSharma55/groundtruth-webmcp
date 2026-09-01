@@ -4,7 +4,7 @@ import { inViewport, store, type State } from "../store";
 import { mapBus, PLACES } from "../mapBus";
 import { DAMAGE_GRADES, type Building, type DamageGrade } from "../types";
 import { IMAGERY } from "../imagery";
-import { fail, ok, throwIfAborted, toFailure } from "./result";
+import { fail, ok, safeEcho, throwIfAborted, toFailure } from "./result";
 import type { GroundtruthTool } from "./useWebMCP";
 
 const str = (description: string, extra: Record<string, unknown> = {}) => ({
@@ -40,7 +40,7 @@ function resolveBuilding(s: State, raw: unknown): Building {
   const b = s.byId.get(id);
   if (!b) {
     throw new Error(
-      `No building with id "${id}". Ids come from list_in_view — call that first and use an id exactly as returned.`,
+      `No building with id "${safeEcho(id)}". Ids come from list_in_view — call that first and use an id exactly as returned.`,
     );
   }
   return b;
@@ -51,7 +51,7 @@ function resolveGrade(raw: unknown): DamageGrade {
   const match = DAMAGE_GRADES.find((g) => g.toLowerCase() === want);
   if (!match) {
     throw new Error(
-      `"${raw}" is not a damage grade. Use exactly one of: ${DAMAGE_GRADES.join(", ")}.`,
+      `"${safeEcho(raw)}" is not a damage grade. Use exactly one of: ${DAMAGE_GRADES.join(", ")}.`,
     );
   }
   return match;
@@ -310,7 +310,7 @@ export function createTools(availability: ToolAvailability): GroundtruthTool[] {
             bounds = PLACES[key] ?? null;
             if (!bounds) {
               return fail(
-                `Unknown place "${input.place}". Known places: ${Object.keys(PLACES).join(", ")}. Or pass an explicit bbox.`,
+                `Unknown place "${safeEcho(input.place)}". Known places: ${Object.keys(PLACES).join(", ")}. Or pass an explicit bbox.`,
               );
             }
           } else if (Array.isArray(input.bbox)) {
@@ -538,7 +538,7 @@ export function createTools(availability: ToolAvailability): GroundtruthTool[] {
           if (!crew) return fail("`crew` is required.");
           const priority = String(input.priority ?? "");
           if (!["Immediate", "Same day", "Routine"].includes(priority)) {
-            return fail(`"${priority}" is not a priority. Use Immediate, Same day or Routine.`);
+            return fail(`"${safeEcho(priority)}" is not a priority. Use Immediate, Same day or Routine.`);
           }
           if (s.pendingTasking) {
             return fail("A tasking is already awaiting the assessor's review. Wait for them to clear it before proposing another.");
@@ -606,7 +606,7 @@ export function createTools(availability: ToolAvailability): GroundtruthTool[] {
           throwIfAborted(options?.signal);
           const layer = String(input.layer ?? "");
           if (layer !== "storm-day" && layer !== "reference") {
-            return fail(`"${layer}" is not a layer. Use "storm-day" or "reference".`);
+            return fail(`"${safeEcho(layer)}" is not a layer. Use "storm-day" or "reference".`);
           }
           store.setImagery(layer);
           const meta = IMAGERY[layer];

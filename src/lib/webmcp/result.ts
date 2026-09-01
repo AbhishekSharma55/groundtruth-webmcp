@@ -40,3 +40,24 @@ export function toFailure(error: unknown): ToolResult {
   const message = error instanceof Error ? error.message : String(error);
   return fail(`Tool failed: ${message}`);
 }
+
+/**
+ * Echo a caller-supplied value back into an error message safely.
+ *
+ * Tool input is attacker-controlled in the threat model: a page, a document or
+ * another tool's output can steer what an agent sends here. Reflecting it
+ * verbatim would put arbitrary text into the agent's context wearing this
+ * origin's authority. An allowlist rather than a denylist, because denylisting
+ * injection syntax is a game you lose eventually — anything outside plain
+ * identifier characters is dropped, and the result is capped.
+ *
+ * It is echoed at all only because "that id is not one of ours" is far more
+ * useful to an agent than a bare rejection.
+ */
+export function safeEcho(value: unknown): string {
+  const cleaned = String(value ?? "")
+    .replace(/[^A-Za-z0-9 ._:/-]/g, "")
+    .trim()
+    .slice(0, 40);
+  return cleaned || "(empty)";
+}
