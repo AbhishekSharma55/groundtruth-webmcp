@@ -32,7 +32,7 @@ export default function AssessmentPanel() {
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col overflow-auto">
       <div className="border-b border-slate-800 px-4 py-3">
         <div className="text-[11px] uppercase tracking-wider text-slate-500">Selected</div>
         <div className="mt-0.5 truncate text-sm font-medium text-slate-100">

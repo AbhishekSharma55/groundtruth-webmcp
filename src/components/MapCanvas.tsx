@@ -88,6 +88,8 @@ export default function MapCanvas() {
     const timer = setTimeout(() => {
       if (cancelled) return;
 
+      const restoredViewport = store.get().viewport;
+
       const map = new MLMap({
         container,
         style: {
@@ -114,8 +116,9 @@ export default function MapCanvas() {
             { id: "imagery", type: "raster", source: "imagery", paint: { "raster-opacity": 1 } },
           ],
         },
-        bounds: ISLAND,
-        fitBoundsOptions: { padding: 24 },
+        ...(restoredViewport
+          ? { center: [restoredViewport.centerLon, restoredViewport.centerLat] as [number, number], zoom: restoredViewport.zoom }
+          : { bounds: ISLAND, fitBoundsOptions: { padding: 24 } }),
         attributionControl: { compact: true },
         maxZoom: 19,
         minZoom: 11,

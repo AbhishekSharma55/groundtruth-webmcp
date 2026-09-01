@@ -5,6 +5,7 @@ import type {
   Assessment, Building, DamageGrade, EventContext, ImageryLayer,
   Infrastructure, Note, Road, Tasking, Viewport,
 } from "./types";
+import { DAMAGE_GRADES } from "./types";
 
 export type PendingTasking = Omit<Tasking, "status"> & { status: "awaiting review" };
 
@@ -43,12 +44,146 @@ const initial: State = {
   taskings: [],
 };
 
+const SESSION_KEY = "groundtruth.console.v1";
+const SESSION_VERSION = 1;
+
+type PersistedState = {
+  version: typeof SESSION_VERSION;
+  assessments: Assessment[];
+  notes: Note[];
+  eventContext: EventContext | null;
+  pendingTasking: PendingTasking | null;
+  taskings: Tasking[];
+  viewport: Viewport | null;
+  imagery: ImageryLayer;
+  selectedId: string | null;
+};
+
 let state: State = initial;
 const listeners = new Set<() => void>();
+let persistenceReady = false;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string";
+}
+
+function isAuthor(value: unknown): value is Assessment["source"] {
+  return value === "you" || value === "agent";
+}
+
+function isAssessment(value: unknown): value is Assessment {
+  if (!isRecord(value)) return false;
+  return (
+    isString(value.buildingId) &&
+    (DAMAGE_GRADES as readonly unknown[]).includes(value.grade) &&
+    isString(value.rationale) &&
+    isAuthor(value.source) &&
+    typeof value.locked === "boolean" &&
+    isFiniteNumber(value.at)
+  );
+}
+
+function isNote(value: unknown): value is Note {
+  if (!isRecord(value)) return false;
+  return (
+    isString(value.id) &&
+    isString(value.buildingId) &&
+    isString(value.text) &&
+    isAuthor(value.source) &&
+    isFiniteNumber(value.at)
+  );
+}
+
+function isEventContext(value: unknown): value is EventContext {
+  if (!isRecord(value)) return false;
+  return isString(value.summary) && isString(value.attribution) && isFiniteNumber(value.at);
+}
+
+function isViewport(value: unknown): value is Viewport {
+  if (!isRecord(value)) return false;
+  const fields = [
+    value.west, value.south, value.east, value.north,
+    value.zoom, value.centerLat, value.centerLon,
+  ];
+  return (
+    fields.every(isFiniteNumber) &&
+    (value.west as number) >= -180 &&
+    (value.east as number) <= 180 &&
+    (value.south as number) >= -90 &&
+    (value.north as number) <= 90 &&
+    (value.west as number) < (value.east as number) &&
+    (value.south as number) < (value.north as number) &&
+    (value.zoom as number) >= 0 &&
+    (value.zoom as number) <= 24 &&
+    (value.centerLat as number) >= -90 &&
+    (value.centerLat as number) <= 90 &&
+    (value.centerLon as number) >= -180 &&
+    (value.centerLon as number) <= 180
+  );
+}
+
+function isTasking(value: unknown): value is Tasking {
+  if (!isRecord(value)) return false;
+  return (
+    isString(value.id) &&
+    Array.isArray(value.buildingIds) &&
+    value.buildingIds.every(isString) &&
+    isString(value.crew) &&
+    (value.priority === "Immediate" || value.priority === "Same day" || value.priority === "Routine") &&
+    (value.status === "awaiting review" || value.status === "dispatched" || value.status === "rejected") &&
+    isFiniteNumber(value.at)
+  );
+}
+
+function parsePersisted(value: unknown): PersistedState | null {
+  if (!isRecord(value) || value.version !== SESSION_VERSION) return null;
+  if (
+    !Array.isArray(value.assessments) || !value.assessments.every(isAssessment) ||
+    !Array.isArray(value.notes) || !value.notes.every(isNote) ||
+    !(value.eventContext === null || isEventContext(value.eventContext)) ||
+    !(value.pendingTasking === null || (isTasking(value.pendingTasking) && value.pendingTasking.status === "awaiting review")) ||
+    !Array.isArray(value.taskings) || !value.taskings.every(isTasking) ||
+    !(value.viewport === null || isViewport(value.viewport)) ||
+    !(value.imagery === "storm-day" || value.imagery === "reference") ||
+    !(value.selectedId === null || isString(value.selectedId))
+  ) {
+    return null;
+  }
+  return value as PersistedState;
+}
+
+function persist() {
+  if (!persistenceReady || typeof window === "undefined") return;
+  const saved: PersistedState = {
+    version: SESSION_VERSION,
+    assessments: [...state.assessments.values()],
+    notes: state.notes,
+    eventContext: state.eventContext,
+    pendingTasking: state.pendingTasking,
+    taskings: state.taskings,
+    viewport: state.viewport,
+    imagery: state.imagery,
+    selectedId: state.selectedId,
+  };
+  try {
+    window.sessionStorage.setItem(SESSION_KEY, JSON.stringify(saved));
+  } catch (error) {
+    console.warn("session state could not be saved", error);
+  }
+}
 
 function set(patch: Partial<State>) {
   state = { ...state, ...patch };
   for (const l of listeners) l();
+  persist();
 }
 
 export const store = {
@@ -58,13 +193,56 @@ export const store = {
     return () => listeners.delete(l);
   },
 
+  restoreSession() {
+    if (persistenceReady || typeof window === "undefined") return;
+    persistenceReady = true;
+    try {
+      const raw = window.sessionStorage.getItem(SESSION_KEY);
+      if (!raw) return;
+      const saved = parsePersisted(JSON.parse(raw));
+      if (!saved) {
+        window.sessionStorage.removeItem(SESSION_KEY);
+        return;
+      }
+      set({
+        assessments: new Map(saved.assessments.map((a) => [a.buildingId, a])),
+        notes: saved.notes,
+        eventContext: saved.eventContext,
+        pendingTasking: saved.pendingTasking,
+        taskings: saved.taskings,
+        viewport: saved.viewport,
+        imagery: saved.imagery,
+        selectedId: saved.selectedId,
+      });
+    } catch {
+      window.sessionStorage.removeItem(SESSION_KEY);
+    }
+  },
+
   hydrate(buildings: Building[], infrastructure: Infrastructure[], roads: Road[]) {
+    const ids = new Set(buildings.map((b) => b.id));
+    const assessments = new Map(
+      [...state.assessments].filter(([buildingId]) => ids.has(buildingId)),
+    );
+    const notes = state.notes.filter((note) => ids.has(note.buildingId));
+    const sanitizeTasking = <T extends Tasking | PendingTasking>(tasking: T): T | null => {
+      const buildingIds = tasking.buildingIds.filter((id) => ids.has(id));
+      return buildingIds.length > 0 ? { ...tasking, buildingIds } : null;
+    };
     set({
       loaded: true,
       buildings,
       byId: new Map(buildings.map((b) => [b.id, b])),
       infrastructure,
       roads,
+      assessments,
+      notes,
+      selectedId: state.selectedId && ids.has(state.selectedId) ? state.selectedId : null,
+      pendingTasking: state.pendingTasking ? sanitizeTasking(state.pendingTasking) : null,
+      taskings: state.taskings.flatMap((tasking) => {
+        const valid = sanitizeTasking(tasking);
+        return valid ? [valid] : [];
+      }),
     });
   },
 
@@ -148,6 +326,7 @@ export const store = {
       taskings: [],
       imagery: "storm-day",
     });
+    if (typeof window !== "undefined") window.sessionStorage.removeItem(SESSION_KEY);
   },
 };
 
@@ -162,16 +341,14 @@ export const store = {
  * on props or closures that can change while the state object does not.
  */
 export function useStore<T>(selector: (s: State) => T): T {
-  const selectorRef = useRef(selector);
-  selectorRef.current = selector;
-  const cache = useRef<{ from: State; value: T } | null>(null);
+  const cache = useRef<{ from: State; selector: typeof selector; value: T } | null>(null);
 
   const snapshot = useCallback(() => {
-    if (!cache.current || cache.current.from !== state) {
-      cache.current = { from: state, value: selectorRef.current(state) };
+    if (!cache.current || cache.current.from !== state || cache.current.selector !== selector) {
+      cache.current = { from: state, selector, value: selector(state) };
     }
     return cache.current.value;
-  }, []);
+  }, [selector]);
 
   return useSyncExternalStore(store.subscribe, snapshot, snapshot);
 }
