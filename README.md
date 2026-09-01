@@ -76,6 +76,31 @@ a self-correcting error naming the tool to call first — never a silent lie.
 
 ---
 
+## Try it
+
+Open the [live console](https://groundtruth-webmcp.vercel.app) in the **ChatGPT
+desktop app's in-app browser** (WebMCP is on by default there), or in **Chrome
+149+** with `chrome://flags/#enable-webmcp-testing` enabled. The banner at the
+bottom of the page names the environment it detected.
+
+Then ask, roughly in this order:
+
+1. **"What am I looking at right now?"** — then pan the map yourself and ask
+   again. The answer changes. That is the whole argument.
+2. **"Which buildings in view have severe surge exposure and haven't been graded yet?"**
+3. **"Take me to the Matanzas Pass Bridge and tell me what's there."** — it moves
+   your map.
+4. **Click a building yourself and grade it "Destroyed".** Then ask the agent to
+   change it to "Minor damage". It is refused, and told why.
+5. **"Tell me what you know about how Ian's surge hit this island, and put it on
+   the page."** — the agent's own knowledge, badged as the agent's and attributed.
+6. **"Write up a situation report from what we've assessed."** — on a fresh load
+   this tool does not exist yet. Grade one building and ask again.
+7. **"Draft a tasking for the worst-hit buildings in view and send it for my
+   review."** — a dialog opens and the agent waits for your click. Try rejecting it.
+
+---
+
 ## The tool surface
 
 13 tools. Read tools carry `readOnlyHint` and `untrustedContentHint`; those are
