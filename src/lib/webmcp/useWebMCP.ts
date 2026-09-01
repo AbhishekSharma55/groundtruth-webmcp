@@ -70,12 +70,12 @@ export function useWebMCP(tools: GroundtruthTool[]): RegistrationState {
     }
 
     for (const [name, tool] of desired) {
-      if (live.has(name)) continue;
-      const { chips: _chips, available: _available, ...descriptor } = tool;
-      void _chips;
-      void _available;
-      document.modelContext!.registerTool({
-        ...descriptor,
+      if (live.has(name) || !document.modelContext) continue;
+      document.modelContext.registerTool({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        annotations: tool.annotations,
         execute: (input, options) => {
           // Chain the agent's per-call signal to the component lifetime, so an
           // unmount cancels work the agent is still awaiting.
