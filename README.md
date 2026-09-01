@@ -201,6 +201,39 @@ injection syntax is a game you lose eventually.
 
 ---
 
+## Benchmark
+
+```bash
+npm run benchmark
+```
+
+Cost of answering one question — *"which buildings in view have severe surge
+exposure and haven't been graded yet?"* — measured live on Chrome 151 at
+1710×929, text at 4 chars/token, images per OpenAI's high-detail tokenisation.
+
+| Path | Tokens | Answers the question? |
+|---|---:|---|
+| **WebMCP tools** (`get_view` + `list_in_view`) | **493** | **Yes** — exact ids, plus aggregates over all 3,301 |
+| Full DOM (`outerHTML`) | 3,405 | No — 0 building ids present |
+| Visible page text | 231 | No — 0 building ids present |
+| One screenshot | 1,105 | No — attributes are not rendered |
+| Screenshot per building (4,970) | 5,491,850 | Yes in principle — lower bound |
+
+**The headline is not the 11,140× ratio.** It is that three of those five rows
+cannot answer the question at any price. Ground elevation, modelled surge depth
+and estimated occupancy are not in the DOM — a regex for building ids over the
+page's visible text returns **zero matches**, because all 4,970 footprints live
+in WebGL — and they are not drawn on the map either. They surface only in the
+detail panel, only for the one building currently selected.
+
+So the pixel path's real cost is one screenshot per building, and even that is a
+lower bound that ignores clicks, scrolling and reasoning.
+
+The tool path is not a cheaper way of reading the screen. It is the only way to
+reach data the screen never shows.
+
+---
+
 ## Threat model
 
 - **Tool input is attacker-controlled.** A document, a page, or another tool's

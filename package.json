@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "eval": "vitest run"
+    "eval": "vitest run",
+    "benchmark": "node evals/benchmark.mjs"
   },
   "dependencies": {
     "maplibre-gl": "^5.24.0",
