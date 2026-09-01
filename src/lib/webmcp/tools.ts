@@ -3,6 +3,7 @@
 import { inViewport, store, type State } from "../store";
 import { mapBus, PLACES } from "../mapBus";
 import { DAMAGE_GRADES, type Building, type DamageGrade } from "../types";
+import { IMAGERY } from "../imagery";
 import { fail, ok, throwIfAborted, toFailure } from "./result";
 import type { GroundtruthTool } from "./useWebMCP";
 
@@ -93,7 +94,7 @@ export function createTools(availability: ToolAvailability): GroundtruthTool[] {
             [
               `Area: Fort Myers Beach / Estero Island, Lee County, FL`,
               `Event: Hurricane Ian, 28 September 2022`,
-              `Imagery layer: ${s.imagery} (${s.imagery === "post-event" ? "captured 30 Sep 2022, NOAA emergency response" : "captured Feb 2022, pre-storm baseline"})`,
+              `Imagery layer: ${IMAGERY[s.imagery].label} — ${IMAGERY[s.imagery].date}. ${IMAGERY[s.imagery].provenance}`,
               `Viewport bbox: W ${v.west.toFixed(4)}, S ${v.south.toFixed(4)}, E ${v.east.toFixed(4)}, N ${v.north.toFixed(4)} at zoom ${v.zoom.toFixed(1)}`,
               `Buildings in frame: ${visible.length} (${graded} graded, ${visible.length - graded} ungraded)`,
               sel ? `Selected: ${fmtBuilding(sel, s)}` : `Selected: nothing`,
@@ -588,11 +589,11 @@ export function createTools(availability: ToolAvailability): GroundtruthTool[] {
     {
       name: "compare_imagery",
       description:
-        "Switch the assessor's map between the pre-event (Feb 2022) and post-event (30 Sep 2022) imagery for the current view, so they can see what changed. Only available while both layers cover the visible area.",
+        "Switch the assessor's map between NOAA's storm-day aerial imagery (30 Sep 2022, two days after Ian made landfall) and an undated Esri reference image showing the neighbourhood intact. Only available while both layers cover the visible area. The reference layer has no published capture date — do not describe it as a dated 'before' image.",
       inputSchema: {
         type: "object",
         properties: {
-          layer: str("Which layer to show.", { enum: ["pre-event", "post-event"] }),
+          layer: str("Which layer to show.", { enum: ["storm-day", "reference"] }),
         },
         required: ["layer"],
         additionalProperties: false,
@@ -604,11 +605,12 @@ export function createTools(availability: ToolAvailability): GroundtruthTool[] {
         try {
           throwIfAborted(options?.signal);
           const layer = String(input.layer ?? "");
-          if (layer !== "pre-event" && layer !== "post-event") {
-            return fail(`"${layer}" is not a layer. Use "pre-event" or "post-event".`);
+          if (layer !== "storm-day" && layer !== "reference") {
+            return fail(`"${layer}" is not a layer. Use "storm-day" or "reference".`);
           }
           store.setImagery(layer);
-          return ok(`The assessor's map is now showing ${layer} imagery (${layer === "pre-event" ? "Feb 2022 baseline" : "30 Sep 2022, NOAA emergency response"}).`);
+          const meta = IMAGERY[layer];
+          return ok(`The assessor's map is now showing the ${meta.label} layer (${meta.date}). ${meta.provenance}`);
         } catch (e) {
           return toFailure(e);
         }

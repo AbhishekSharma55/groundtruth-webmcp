@@ -71,7 +71,7 @@ export type EventContext = {
   at: number;
 };
 
-export type ImageryLayer = "pre-event" | "post-event";
+export type ImageryLayer = "storm-day" | "reference";
 
 export type Tasking = {
   id: string;

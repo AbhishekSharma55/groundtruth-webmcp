@@ -33,8 +33,8 @@ const initial: State = {
   infrastructure: [],
   roads: [],
   viewport: null,
-  imagery: "post-event",
-  imageryAvailable: ["pre-event", "post-event"],
+  imagery: "storm-day",
+  imageryAvailable: ["storm-day", "reference"],
   selectedId: null,
   assessments: new Map(),
   notes: [],
@@ -146,7 +146,7 @@ export const store = {
       eventContext: null,
       pendingTasking: null,
       taskings: [],
-      imagery: "post-event",
+      imagery: "storm-day",
     });
   },
 };
